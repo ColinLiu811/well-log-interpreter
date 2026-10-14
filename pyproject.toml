@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wellog"
+version = "0.1.0"
+description = "Well log interpreter: LAS parsing, petrophysics, pay flagging and log display"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "lasio>=0.31",
+    "numpy>=1.24",
+    "pandas>=2.0",
+    "matplotlib>=3.7",
+    "scikit-learn>=1.3",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[project.scripts]
+wellog = "wellog.cli:main"
+
+[tool.setuptools]
+packages = ["wellog"]
