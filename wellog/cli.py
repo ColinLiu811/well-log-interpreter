@@ -2,6 +2,7 @@
 
     wellog info WELL.las
     wellog interpret WELL.las --sw simandoux --plot out.png --csv out.csv
+    wellog predict --train A.las B.las --input C.las --target DT --plot c.png
     wellog synth data/
 """
 
@@ -79,6 +80,51 @@ def _cmd_interpret(args):
         print(f"wrote {args.plot}")
 
 
+def _cmd_predict(args):
+    from .ml import LogPredictor, leave_one_well_out
+
+    train = [load_las(p) for p in args.train]
+    target = load_las(args.input) if args.input else None
+    features = args.features.split(",")
+
+    if args.cv:
+        cv = leave_one_well_out(train, args.target, features)
+        print("Leave-one-well-out validation:")
+        print(cv.to_string(float_format=lambda v: f"{v:.3f}"))
+        print()
+
+    if args.model and Path(args.model).exists() and not args.retrain:
+        predictor = LogPredictor.load(args.model)
+        print(f"loaded model from {args.model}")
+    else:
+        fit_wells = list(train)
+        if target is not None and args.self_train and target.has(args.target):
+            fit_wells.append(target)
+        predictor = LogPredictor(target=args.target, features=features).fit(fit_wells)
+        print(f"trained {args.target} model on {len(fit_wells)} well(s)")
+        if args.model:
+            predictor.save(args.model)
+            print(f"saved model to {args.model}")
+
+    if target is None:
+        return
+    filled = predictor.fill(target)
+    n_missing = target.data[args.target].isna().sum() if args.target in target.data else len(filled)
+    print(f"{target.name}: predicted {args.target} for {n_missing} missing samples")
+
+    if args.las_out:
+        save_las(target, args.las_out, extra=filled)
+        print(f"wrote {args.las_out}")
+    if args.csv:
+        filled.to_csv(args.csv)
+        print(f"wrote {args.csv}")
+    if args.plot:
+        from .plot import plot_well
+
+        plot_well(target, filled, out=args.plot, title=f"{target.name} - {args.target} prediction")
+        print(f"wrote {args.plot}")
+
+
 def _cmd_synth(args):
     from .synthetic import write_demo_dataset
 
@@ -123,6 +169,21 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--plot", help="write the log display to an image file")
     g.add_argument("--depth-range", type=float, nargs=2, metavar=("TOP", "BASE"))
     p.set_defaults(func=_cmd_interpret)
+
+    p = sub.add_parser("predict", help="train a model to predict a missing log")
+    p.add_argument("--train", nargs="+", required=True, help="LAS files with the target curve")
+    p.add_argument("--input", help="LAS file to predict the curve for")
+    p.add_argument("--target", default="DT")
+    p.add_argument("--features", default="GR,RHOB,NPHI,RT", help="comma-separated input curves")
+    p.add_argument("--cv", action="store_true", help="report leave-one-well-out metrics")
+    p.add_argument("--no-self-train", dest="self_train", action="store_false",
+                   help="don't use the input well's own measured target samples for training")
+    p.add_argument("--model", help="joblib path to load from / save to")
+    p.add_argument("--retrain", action="store_true", help="retrain even if --model exists")
+    p.add_argument("--las-out")
+    p.add_argument("--csv")
+    p.add_argument("--plot")
+    p.set_defaults(func=_cmd_predict)
 
     p = sub.add_parser("synth", help="write the synthetic demo wells")
     p.add_argument("out_dir", nargs="?", default="data")
