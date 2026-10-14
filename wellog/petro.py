@@ -125,3 +125,104 @@ def shale_corrected_nd_porosity(
     phin_c = np.asarray(nphi, dtype=float) - vsh * nphi_sh
     phi = neutron_density_porosity(phin_c, phid_c)
     return np.clip(phi, 0.0, 0.5)
+
+
+# --------------------------------------------------------------------------
+# Water saturation
+# --------------------------------------------------------------------------
+
+
+def archie_sw(rt: ArrayLike, phi: ArrayLike, rw: float, a: float = 1.0, m: float = 2.0, n: float = 2.0) -> ArrayLike:
+    """Archie (1942): Sw = (a * Rw / (phi^m * Rt)) ^ (1/n).
+
+    Valid for clean (shale-free) formations. Returned values are clipped to
+    [0, 1]; zero porosity gives Sw = 1.
+    """
+    rt = np.asarray(rt, dtype=float)
+    phi = np.asarray(phi, dtype=float)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        sw = (a * rw / (phi**m * rt)) ** (1.0 / n)
+    sw = np.where(phi <= 0, 1.0, sw)
+    return np.where(np.isnan(rt) | np.isnan(phi), np.nan, np.clip(sw, 0.0, 1.0))
+
+
+def simandoux_sw(
+    rt: ArrayLike,
+    phi: ArrayLike,
+    vsh: ArrayLike,
+    rw: float,
+    rsh: float,
+    a: float = 1.0,
+    m: float = 2.0,
+    n: float = 2.0,
+) -> ArrayLike:
+    """Simandoux (1963) shaly-sand saturation.
+
+    Solves  1/Rt = phi^m * Sw^n / (a*Rw) + Vsh * Sw / Rsh  for Sw.
+
+    For n = 2 the closed-form root of the quadratic is used. For other n the
+    left-hand side is monotonic in Sw, so it is solved by bisection.
+    With Vsh = 0 this reduces to Archie.
+    """
+    rt = np.asarray(rt, dtype=float)
+    phi = np.clip(np.asarray(phi, dtype=float), 0, None)
+    vsh = np.clip(np.asarray(vsh, dtype=float), 0, 1)
+    c = phi**m / (a * rw)  # clean-sand conductance term
+    b = vsh / rsh  # shale conductance term
+
+    with np.errstate(divide="ignore", invalid="ignore"):
+        if n == 2:
+            sw = (-b + np.sqrt(b**2 + 4 * c / rt)) / (2 * c)
+        else:
+            lo = np.zeros_like(rt)
+            hi = np.ones_like(rt)
+            target = 1.0 / rt
+            for _ in range(50):
+                mid = 0.5 * (lo + hi)
+                f = c * mid**n + b * mid - target
+                lo = np.where(f < 0, mid, lo)
+                hi = np.where(f >= 0, mid, hi)
+            sw = 0.5 * (lo + hi)
+
+    sw = np.where(c <= 0, 1.0, sw)
+    return np.where(np.isnan(rt) | np.isnan(phi), np.nan, np.clip(sw, 0.0, 1.0))
+
+
+def apparent_rw(rt: ArrayLike, phi: ArrayLike, a: float = 1.0, m: float = 2.0) -> ArrayLike:
+    """Rwa = Rt * phi^m / a. Equals Rw in clean water-bearing rock."""
+    return np.asarray(rt, dtype=float) * np.asarray(phi, dtype=float) ** m / a
+
+
+def estimate_rw(
+    rt: ArrayLike,
+    phi: ArrayLike,
+    vsh: ArrayLike,
+    a: float = 1.0,
+    m: float = 2.0,
+    vsh_max: float = 0.2,
+    phi_min: float = 0.12,
+    percentile: float = 10,
+) -> float:
+    """Estimate Rw from the Rwa curve in clean, porous rock.
+
+    Hydrocarbons can only raise Rwa, so a low percentile of Rwa over the
+    clean porous intervals approximates the water-zone value.
+    """
+    rwa = apparent_rw(rt, phi, a, m)
+    mask = (np.asarray(vsh) <= vsh_max) & (np.asarray(phi) >= phi_min) & np.isfinite(rwa)
+    if mask.sum() < 10:
+        raise ValueError("not enough clean porous samples to estimate Rw; pass rw explicitly")
+    return float(np.percentile(rwa[mask], percentile))
+
+
+def estimate_rsh(rt: ArrayLike, vsh: ArrayLike, vsh_min: float = 0.8) -> float:
+    """Shale resistivity: median Rt where Vsh is high."""
+    rt = np.asarray(rt, dtype=float)
+    mask = (np.asarray(vsh) >= vsh_min) & np.isfinite(rt)
+    if mask.sum() < 10:
+        raise ValueError("not enough shale samples to estimate Rsh; pass rsh explicitly")
+    return float(np.median(rt[mask]))
+
+
+def bulk_volume_water(phi: ArrayLike, sw: ArrayLike) -> ArrayLike:
+    return np.asarray(phi, dtype=float) * np.asarray(sw, dtype=float)
