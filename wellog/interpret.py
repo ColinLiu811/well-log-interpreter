@@ -26,6 +26,7 @@ class InterpretationParams:
     nphi_sh: float = 0.38
     dt_ma: float = 55.5
     dt_fl: float = 189.0
+    dt_sh: float = 100.0
     # saturation
     sw_method: str = "simandoux"  # or "archie"
     rw: Optional[float] = None  # estimated from Rwa when None
@@ -79,7 +80,8 @@ def interpret(well: WellLog, params: Optional[InterpretationParams] = None) -> p
             raise ValueError(f"{well.name}: sonic porosity needs DT")
         phit = np.clip(petro.sonic_porosity(df["DT"], p.dt_ma, p.dt_fl), 0, 0.5)
         out["PHIT"] = phit
-        out["PHIE"] = petro.effective_porosity(phit, vsh, 0.0) * (1 - vsh)
+        phis_sh = petro.sonic_porosity(p.dt_sh, p.dt_ma, p.dt_fl)
+        out["PHIE"] = petro.effective_porosity(phit, vsh, phis_sh)
     else:
         raise ValueError(f"unknown porosity method {p.porosity_method!r}")
     phie = out["PHIE"].to_numpy()
